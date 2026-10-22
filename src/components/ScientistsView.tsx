@@ -20,14 +20,55 @@ export const ScientistsView: React.FC<ScientistsViewProps> = ({ selectedScientis
     }
   ]);
 
-  const activeSci = SCIENTISTS.find(s => s.id === selectedScientist) || SCIENTISTS[0];
+  const SCIENTIST_DEFAULT_SUBJECTS: Record<string, string> = {
+    biologist: 'Sinh học',
+    physicist: 'Vật lí',
+    chemist: 'Hóa học',
+    earth: 'Khoa học Trái Đất'
+  };
 
-  const suggestedQuestions = [
-    'Giải thích tại sao lá cây có màu xanh và quá trình quang hợp?',
-    'Định luật bảo toàn cơ năng áp dụng như thế nào trong thực tế?',
-    'Làm thế nào để cân bằng phương trình hóa học nhanh chóng?',
-    'Nguyên nhân nào gây ra hiện tượng biến đổi khí hậu ở vùng cao?'
-  ];
+  const SCIENTIST_SUGGESTIONS: Record<string, string[]> = {
+    biologist: [
+      'Cây hấp thụ dinh dưỡng như thế nào?',
+      'Giải thích tại sao lá cây có màu xanh và quá trình quang hợp?',
+      'Hô hấp tế bào giải phóng năng lượng ATP ra sao?',
+      'Sự khác nhau giữa tế bào thực vật và tế bào động vật?'
+    ],
+    physicist: [
+      'Định luật bảo toàn cơ năng áp dụng như thế nào trong thực tế?',
+      'Lực đẩy Archimedes và điều kiện để một vật nổi hoặc chìm?',
+      'Công thức tính áp suất chất lỏng ở độ sâu h?',
+      'Định luật Ohm và cách tính điện trở trong đoạn mạch?'
+    ],
+    chemist: [
+      'Làm thế nào để cân bằng phương trình hóa học nhanh chóng?',
+      'Thang đo pH là gì và phân biệt dung dịch acid với base?',
+      'Bảng tuần hoàn các nguyên tố hóa học được sắp xếp thế nào?',
+      'Dãy hoạt động hóa học của kim loại và ứng dụng?'
+    ],
+    earth: [
+      'Nguyên nhân nào gây ra hiện tượng biến đổi khí hậu ở vùng cao?',
+      'Chu trình nước trong tự nhiên diễn ra như thế nào?',
+      'Cấu tạo các lớp của Trái Đất và nguyên nhân gây động đất?',
+      'Tại sao trên Trái Đất lại có hiện tượng ngày đêm và 4 mùa?'
+    ]
+  };
+
+  const activeSci = SCIENTISTS.find(s => s.id === selectedScientist) || SCIENTISTS[0];
+  const suggestedQuestions = SCIENTIST_SUGGESTIONS[selectedScientist] || SCIENTIST_SUGGESTIONS.biologist;
+
+  const handleSelectScientist = (sciId: string) => {
+    setSelectedScientist(sciId);
+    const newSubj = SCIENTIST_DEFAULT_SUBJECTS[sciId] || 'Sinh học';
+    setSubject(newSubj);
+    const targetSci = SCIENTISTS.find(s => s.id === sciId) || activeSci;
+    setMessages([
+      {
+        role: 'model',
+        text: `Chào em! Tôi là ${targetSci.name} (${targetSci.title}). Tôi sẵn sàng đồng hành cùng em khám phá mọi bí ẩn trong môn ${newSubj} lớp ${grade} theo chuẩn KHTN 2018. Em muốn hỏi điều gì hôm nay?`
+      }
+    ]);
+  };
 
   const handleSend = async (textToSend?: string) => {
     const q = textToSend || promptInput;
@@ -51,10 +92,10 @@ export const ScientistsView: React.FC<ScientistsViewProps> = ({ selectedScientis
         })
       });
       const data = await res.json();
-      if (res.ok) {
+      if (res.ok && data?.reply) {
         setMessages([...newMessages, { role: 'model', text: data.reply }]);
       } else {
-        setMessages([...newMessages, { role: 'model', text: 'Xin lỗi, có lỗi xảy ra khi kết nối với trợ lý AI. Vui lòng thử lại.' }]);
+        setMessages([...newMessages, { role: 'model', text: data?.error || 'Xin lỗi, có lỗi xảy ra khi kết nối với trợ lý AI. Vui lòng thử lại.' }]);
       }
     } catch (err) {
       setMessages([...newMessages, { role: 'model', text: 'Lỗi mạng khi gọi trợ lý AI. Vui lòng kiểm tra kết nối.' }]);
@@ -113,7 +154,7 @@ export const ScientistsView: React.FC<ScientistsViewProps> = ({ selectedScientis
             return (
               <div
                 key={sci.id}
-                onClick={() => setSelectedScientist(sci.id)}
+                onClick={() => handleSelectScientist(sci.id)}
                 className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-start gap-3.5 ${
                   isSelected
                     ? 'bg-cyan-50 border-cyan-500 shadow-md ring-2 ring-cyan-500/20'

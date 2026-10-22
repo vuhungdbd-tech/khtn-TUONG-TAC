@@ -142,5 +142,23 @@ export const MOCK_QUESTIONS_BANK = [
     explanation: 'Phương trình: 2Mg + O2 -> 2MgO. Số mol Mg = 4,8 / 24 = 0,2 mol. Số mol MgO = 0,2 mol. Khối lượng MgO = 0,2 * 40 = 8,0 gam.',
     status: 'Đã duyệt',
     creator: 'GV. Lê Văn C'
+  },
+  {
+    id: 'q_4',
+    subject: 'Khoa học Trái Đất',
+    grade: 'Lớp 6',
+    topic: 'Cấu tạo Trái Đất',
+    difficulty: 'Cơ bản',
+    question: 'Cấu tạo bên trong của Trái Đất gồm có bao nhiêu lớp chính từ ngoài vào trong?',
+    options: [
+      'A. 3 lớp: Vỏ Trái Đất, Mantin và Nhân Trái Đất.',
+      'B. 2 lớp: Thạch quyển và Thủy quyển.',
+      'C. 4 lớp: Vỏ, Khí quyển, Sinh quyển và Thủy quyển.',
+      'D. 5 lớp đồng tâm kim loại.'
+    ],
+    correctIndex: 0,
+    explanation: 'Trái Đất gồm 3 lớp chính đồng tâm: Vỏ Trái Đất, Lớp Mantin và Nhân Trái Đất.',
+    status: 'Đã duyệt',
+    creator: 'GV. Hoàng Thị D'
   }
 ];

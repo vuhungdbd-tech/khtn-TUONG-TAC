@@ -59,8 +59,8 @@ export default function App() {
           <p>
             Phục vụ học tập môn Khoa học Tự nhiên THCS (Lớp 6–9) theo Chương trình Giáo dục phổ thông 2018. Tối ưu cho giáo viên và học sinh vùng cao.
           </p>
-          <p className="text-slate-500 pt-2">
-            © 2026 Google AI Studio Build. Bảo lưu mọi quyền.
+          <p className="text-slate-400 pt-2 font-medium">
+            Ứng dụng được phát triển bởi tổ KHTN-Trường PTDTBT THCS Pu Nhi- xã Pu Nhi- Tỉnh Điện Biên
           </p>
         </div>
       </footer>

@@ -1,14 +1,15 @@
 import { GoogleGenAI } from '@google/genai';
+import { findBestScienceAnswer } from './science-engine';
 
 const SCIENTIST_PROMPTS: Record<string, string> = {
-  biologist: `Bạn là Giáo sư Flora, Nhà Sinh học AI chuyên giải thích sinh học THCS (6-9) theo CT GDPT 2018. Trả lời ngắn gọn, súc tích, dễ hiểu, có ví dụ thực tế và câu hỏi ôn tập.`,
-  physicist: `Bạn là Giáo sư Newton, Nhà Vật lí AI chuyên giải thích vật lí THCS (6-9) theo CT GDPT 2018. Trả lời ngắn gọn, súc tích, nêu công thức và ví dụ thực tế.`,
-  chemist: `Bạn là Tiến sĩ Alchem, Nhà Hóa học AI chuyên hóa học THCS (6-9) theo CT GDPT 2018. Trả lời ngắn gọn, cân bằng phương trình chính xác và an toàn.`,
-  earth: `Bạn là Tiến sĩ Geo, Nhà Khoa học Trái Đất AI chuyên khoa học Trái Đất & Môi trường THCS (6-9). Trả lời ngắn gọn, gắn với đời sống vùng cao.`
+  biologist: `Bạn là Giáo sư Flora, Nhà Sinh học AI chuyên giải thích sinh học THCS (6-9) theo CT GDPT 2018. Trả lời chi tiết, khoa học, sư phạm, có ví dụ thực tế và câu hỏi ôn tập.`,
+  physicist: `Bạn là Giáo sư Newton, Nhà Vật lí AI chuyên giải thích vật lí THCS (6-9) theo CT GDPT 2018. Trả lời chi tiết, nêu công thức, bản chất vật lí và ví dụ thực tế.`,
+  chemist: `Bạn là Tiến sĩ Alchem, Nhà Hóa học AI chuyên hóa học THCS (6-9) theo CT GDPT 2018. Trả lời chi tiết, bản chất phản ứng, cân bằng phương trình chính xác và an toàn.`,
+  earth: `Bạn là Tiến sĩ Geo, Nhà Khoa học Trái Đất AI chuyên khoa học Trái Đất & Môi trường THCS (6-9). Trả lời chi tiết, gắn với thực tiễn khí hậu và địa lí.`
 };
 
 export default async function handler(req: any, res: any) {
-  // CORS headers
+  // CORS headers for Vercel Serverless Function
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -26,41 +27,55 @@ export default async function handler(req: any, res: any) {
       body = JSON.parse(body);
     } catch {}
   }
-  const { scientistId = 'biologist', grade = '8', subject = 'Sinh học', prompt = '', history = [] } = body || {};
+  const { 
+    scientistId = 'biologist', 
+    grade = '8', 
+    subject = 'Sinh học', 
+    prompt = '', 
+    history = [] 
+  } = body || {};
 
-  if (!prompt) {
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
     return res.status(400).json({ error: 'Thiếu nội dung câu hỏi.' });
   }
 
-  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
-  const ai = apiKey ? new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      }
-    }
-  }) : null;
+  const cleanPrompt = prompt.trim();
+  const rawKey = (process.env.GEMINI_API_KEY || '').trim();
+  
+  // Kiểm tra key có hợp lệ không (loại bỏ trường hợp placeholder hoặc key bị treo)
+  const isSuspendedOrInvalidKey = rawKey.startsWith('AQ.Ab8') || rawKey.includes('MY_GEMINI_API_KEY') || rawKey.length < 10;
+  const apiKey = isSuspendedOrInvalidKey ? '' : rawKey;
 
-  const systemPrompt = (SCIENTIST_PROMPTS[scientistId] || SCIENTIST_PROMPTS.biologist) +
-    `\nHọc sinh lớp ${grade}, môn ${subject}. Cấu trúc: 1. Trả lời trực tiếp, 2. Giải thích, 3. Ví dụ, 4. Câu hỏi kiểm tra.`;
-
-  if (!ai) {
-    const fallbackReply = `Chào em! Về câu hỏi "${prompt}" trong môn ${subject} lớp ${grade}:
-
-1. Trọng tâm bài học: Đây là nội dung quan trọng trong chương trình GDPT 2018.
-2. Bản chất khoa học: Hiện tượng tuân theo các quy luật tự nhiên đã học.
-3. Ứng dụng thực tế: Quan sát các ví dụ gần gũi trong đời sống hàng ngày.
-4. Ôn tập: Hãy cùng suy nghĩ thêm về bài học này nhé!`;
-    return res.status(200).json({ reply: fallbackReply });
+  // Nếu không có API key hợp lệ, sử dụng ngay bộ tri thức KHTN chuyên sâu chuẩn CT 2018
+  if (!apiKey) {
+    const scienceReply = findBestScienceAnswer(cleanPrompt, scientistId, grade, subject);
+    return res.status(200).json({ reply: scienceReply });
   }
 
-  const contextText = (history || []).slice(-2).map((h: any) => `${h.role === 'user' ? 'Học sinh' : 'AI'}: ${h.text}`).join('\n');
-  const fullPrompt = contextText ? `${contextText}\nHọc sinh: ${prompt}` : prompt;
-
   try {
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const systemPrompt = (SCIENTIST_PROMPTS[scientistId] || SCIENTIST_PROMPTS.biologist) +
+      `\nĐối tượng học sinh: Lớp ${grade}, phân môn ${subject}. Cấu trúc phản hồi chuẩn GDPT 2018 gồm 4 phần:
+1. Trả lời trực tiếp: Trả lời thẳng vào câu hỏi, nêu rõ khái niệm/kết luận chính.
+2. Cơ chế & Giải thích khoa học: Giải thích chi tiết bản chất tự nhiên, công thức hoặc phương trình liên quan.
+3. Ví dụ thực tế & Ứng dụng: Minh họa gần gũi trong đời sống hoặc bài thực hành.
+4. Câu hỏi kiểm tra & Vận dụng: 1 câu hỏi để học sinh củng cố bài học.`;
+
+    const contextText = (history || [])
+      .slice(-3)
+      .map((h: any) => `${h.role === 'user' ? 'Học sinh' : 'AI'}: ${h.text}`)
+      .join('\n');
+    const fullPrompt = contextText ? `${contextText}\nHọc sinh: ${cleanPrompt}` : cleanPrompt;
+
     let replyText = '';
-    // Try primary model gemini-3.8-flash first
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-3.8-flash',
@@ -72,10 +87,9 @@ export default async function handler(req: any, res: any) {
         }
       });
       replyText = response.text || '';
-    } catch (e1: any) {
-      console.warn('gemini-3.8-flash fallback triggered:', e1?.message);
-      // Fallback to gemini-3.1-flash-lite
-      const response = await ai.models.generateContent({
+    } catch (modelErr: any) {
+      console.warn('Primary model error, attempting fallback model:', modelErr?.message);
+      const fallbackResponse = await ai.models.generateContent({
         model: 'gemini-3.1-flash-lite',
         contents: fullPrompt,
         config: {
@@ -84,18 +98,20 @@ export default async function handler(req: any, res: any) {
           maxOutputTokens: 600,
         }
       });
-      replyText = response.text || '';
+      replyText = fallbackResponse.text || '';
     }
 
-    return res.status(200).json({ reply: replyText || 'Xin lỗi, AI chưa thể tạo câu trả lời lúc này.' });
-  } catch (error: any) {
-    console.error('AI Chat Error:', error);
-    const fallbackReply = `Chào em! Về câu hỏi "${prompt}" trong chương trình ${subject} lớp ${grade}:
+    if (replyText && replyText.trim().length > 20) {
+      return res.status(200).json({ reply: replyText });
+    }
 
-1. Trọng tâm bài học: Kiến thức này là nội dung nền tảng trong chương trình KHTN 2018.
-2. Bản chất khoa học: Hiện tượng và quy luật này giúp giải thích các biến đổi vật chất và tự nhiên trong đời sống.
-3. Ứng dụng thực tiễn: Em hãy quan sát các thí nghiệm và hiện tượng liên quan trong thực tế hàng ngày.
-4. Gợi ý học tập: Hãy ghi nhớ các định luật cơ bản và trao đổi thêm cùng thầy cô, bạn bè nhé!`;
-    return res.status(200).json({ reply: fallbackReply });
+    // Nếu Gemini trả về rỗng, dùng tri thức chuyên sâu
+    const scienceReply = findBestScienceAnswer(cleanPrompt, scientistId, grade, subject);
+    return res.status(200).json({ reply: scienceReply });
+  } catch (error: any) {
+    console.error('Gemini API call failed (e.g. invalid key or suspension), serving science answer:', error?.message);
+    // Khi gọi API thất bại (403 CONSUMER_SUSPENDED, quota, network...), cung cấp câu trả lời khoa học đích thực
+    const scienceReply = findBestScienceAnswer(cleanPrompt, scientistId, grade, subject);
+    return res.status(200).json({ reply: scienceReply });
   }
 }

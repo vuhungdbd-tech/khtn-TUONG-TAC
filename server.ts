@@ -4,6 +4,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
+import { getQuestionsBySubjectAndLevel, normalizeSubject, normalizeDifficulty } from './src/data/quizBank';
 
 dotenv.config();
 
@@ -26,6 +27,8 @@ const ai = apiKey ? new GoogleGenAI({
   }
 }) : null;
 
+import { findBestScienceAnswer } from './api/science-engine';
+
 // AI Scientist system prompts
 const SCIENTIST_PROMPTS: Record<string, string> = {
   biologist: `Bạn là Giáo sư Flora, Nhà Sinh học AI chuyên giải thích sinh học THCS (6-9) theo CT GDPT 2018. Trả lời ngắn gọn, súc tích, dễ hiểu, có ví dụ thực tế và câu hỏi ôn tập.`,
@@ -37,301 +40,172 @@ const SCIENTIST_PROMPTS: Record<string, string> = {
 // API: AI Chat with Scientist
 app.post('/api/ai-chat', async (req, res) => {
   try {
-    const { scientistId = 'biologist', grade = '8', subject = 'Sinh học', prompt, history = [] } = req.body;
+    const { scientistId = 'biologist', grade = '8', subject = 'Sinh học', prompt = '', history = [] } = req.body || {};
     
-    if (!prompt) {
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({ error: 'Thiếu nội dung câu hỏi.' });
     }
 
-    const systemPrompt = (SCIENTIST_PROMPTS[scientistId] || SCIENTIST_PROMPTS.biologist) +
-      `\nHọc sinh lớp ${grade}, môn ${subject}. Cấu trúc: 1. Trả lời trực tiếp, 2. Giải thích, 3. Ví dụ, 4. Câu hỏi kiểm tra.`;
+    const cleanPrompt = prompt.trim();
+    const rawKey = (process.env.GEMINI_API_KEY || '').trim();
+    const isSuspendedOrInvalidKey = rawKey.startsWith('AQ.Ab8') || rawKey.includes('MY_GEMINI_API_KEY') || rawKey.length < 10;
+    const keyToUse = isSuspendedOrInvalidKey ? '' : rawKey;
 
-    if (!ai) {
-      const fallbackReply = `Chào em! (Chế độ phản hồi nhanh). Về câu hỏi "${prompt}" trong môn ${subject} lớp ${grade}:\n\n1. Trả lời trực tiếp: Đây là kiến thức trọng tâm KHTN 2018.\n2. Giải thích: Hiện tượng tuân theo quy luật tự nhiên.\n3. Ví dụ: Quan sát thực tế xung quanh.\n4. Ôn tập: Hãy suy nghĩ thêm một ví dụ tương tự nhé!`;
-      return res.json({ reply: fallbackReply });
+    if (!keyToUse) {
+      const scienceReply = findBestScienceAnswer(cleanPrompt, scientistId, grade, subject);
+      return res.json({ reply: scienceReply });
     }
 
-    try {
-      const contextText = history.slice(-2).map((h: any) => `${h.role === 'user' ? 'Học sinh' : 'AI'}: ${h.text}`).join('\n');
-      const fullPrompt = contextText ? `${contextText}\nHọc sinh: ${prompt}` : prompt;
+    const systemPrompt = (SCIENTIST_PROMPTS[scientistId] || SCIENTIST_PROMPTS.biologist) +
+      `\nHọc sinh lớp ${grade}, môn ${subject}. Cấu trúc chuẩn: 1. Trả lời trực tiếp, 2. Giải thích khoa học, 3. Ví dụ thực tế, 4. Câu hỏi kiểm tra.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
+    try {
+      const liveAi = new GoogleGenAI({
+        apiKey: keyToUse,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+
+      const contextText = (history || []).slice(-2).map((h: any) => `${h.role === 'user' ? 'Học sinh' : 'AI'}: ${h.text}`).join('\n');
+      const fullPrompt = contextText ? `${contextText}\nHọc sinh: ${cleanPrompt}` : cleanPrompt;
+
+      const response = await liveAi.models.generateContent({
+        model: 'gemini-3.8-flash',
         contents: fullPrompt,
         config: {
           systemInstruction: systemPrompt,
           temperature: 0.6,
-          maxOutputTokens: 600,
+          maxOutputTokens: 800,
         }
       });
 
-      const replyText = response.text || 'Xin lỗi, AI chưa thể tạo câu trả lời lúc này.';
-      return res.json({ reply: replyText });
+      const replyText = response.text || '';
+      if (replyText && replyText.trim().length > 20) {
+        return res.json({ reply: replyText });
+      }
+      const scienceReply = findBestScienceAnswer(cleanPrompt, scientistId, grade, subject);
+      return res.json({ reply: scienceReply });
     } catch (geminiErr: any) {
-      console.error('Gemini API Error, falling back:', geminiErr);
-      const fallbackReply = `Chào em! Về nội dung "${prompt}" (${subject} lớp ${grade}):\n\n1. Trả lời trực tiếp: Nội dung này rất quan trọng trong chương trình KHTN.\n2. Giải thích: Khoa học giúp chúng ta giải mã thế giới tự nhiên.\n3. Ví dụ: Các quá trình diễn ra quanh ta.\n4. Gợi ý: Hãy trao đổi thêm với thầy cô nhé!`;
-      return res.json({ reply: fallbackReply });
+      console.warn('Gemini API Error, using curriculum science answer:', geminiErr?.message);
+      const scienceReply = findBestScienceAnswer(cleanPrompt, scientistId, grade, subject);
+      return res.json({ reply: scienceReply });
     }
   } catch (error: any) {
     console.error('AI Chat Error:', error);
-    res.status(500).json({ error: error.message || 'Lỗi khi gọi trợ lý AI.' });
+    const { scientistId = 'biologist', grade = '8', subject = 'Sinh học', prompt = '' } = req.body || {};
+    const scienceReply = findBestScienceAnswer(prompt, scientistId, grade, subject);
+    return res.json({ reply: scienceReply });
   }
 });
 
-// Specific fallback question banks by subject and grade for 100% concrete educational questions
-const SPECIFIC_QUESTION_BANKS: Record<string, any[]> = {
-  'Vật lí_8': [
-    {
-      id: 'p8_1',
-      question: 'Áp suất chất lỏng tác dụng lên một điểm ở độ sâu h tính theo công thức nào (với d là trọng lượng riêng của chất lỏng)?',
-      options: ['A. p = d * h', 'B. p = d / h', 'C. p = h / d', 'D. p = d * h * h'],
-      correctIndex: 0,
-      explanation: 'Công thức tính áp suất chất lỏng đứng yên ở độ sâu h là p = d * h, trong đó d là trọng lượng riêng của chất lỏng, h là chiều cao của cột chất lỏng tính từ điểm đó tới mặt thoáng.'
-    },
-    {
-      id: 'p8_2',
-      question: 'Một người đứng bằng hai chân trên sàn nhà. Trọng lượng của người là 500 N, diện tích tiếp xúc của mỗi bàn chân với mặt sàn là 0,01 m2. Áp suất người đó tác dụng lên sàn là bao nhiêu?',
-      options: ['A. 5000 Pa', 'B. 25000 Pa', 'C. 10000 Pa', 'D. 50000 Pa'],
-      correctIndex: 1,
-      explanation: 'Diện tích tiếp xúc tổng cộng S = 2 * 0,01 = 0,02 m2. Áp suất p = F / S = 500 / 0,02 = 25000 Pa.'
-    },
-    {
-      id: 'p8_3',
-      question: 'Lực đẩy Archimedes tác dụng lên một vật nhúng trong chất lỏng phụ thuộc vào những yếu tố nào?',
-      options: [
-        'A. Trọng lượng riêng của chất lỏng và thể tích phần chất lỏng bị vật chiếm chỗ.',
-        'B. Khối lượng của vật và chiều sâu nhúng vật.',
-        'C. Trọng lượng của vật và thể tích của vật.',
-        'D. Hình dạng của vật và bản chất của chất lỏng.'
-      ],
-      correctIndex: 0,
-      explanation: 'Theo định luật Archimedes, lực đẩy Fa = d * V, phụ thuộc vào trọng lượng riêng d của chất lỏng và thể tích V phần thể tích chất lỏng bị vật chiếm chỗ.'
-    },
-    {
-      id: 'p8_4',
-      question: 'Đại biểu nào sau đây biểu diễn công cơ học khi có lực tác dụng làm vật dịch chuyển theo hướng của lực?',
-      options: ['A. A = F * s', 'B. A = F / s', 'C. A = s / F', 'D. A = F * v'],
-      correctIndex: 0,
-      explanation: 'Công cơ học được tính bằng tích của lực tác dụng F và quãng đường dịch chuyển s theo phương của lực: A = F * s.'
-    },
-    {
-      id: 'p8_5',
-      question: 'Động năng của một vật phụ thuộc vào những đại lượng nào?',
-      options: [
-        'A. Khối lượng và vận tốc của vật.',
-        'B. Trọng lượng và độ cao của vật.',
-        'C. Nhiệt độ và thể tích của vật.',
-        'D. Kích thước và chất làm vật.'
-      ],
-      correctIndex: 0,
-      explanation: 'Động năng của vật phụ thuộc vào khối lượng m và vận tốc v của vật theo công thức Wd = 1/2 * m * v^2.'
-    }
-  ],
-  'Sinh học_7': [
-    {
-      id: 'b7_1',
-      question: 'Quá trình quang hợp ở thực vật diễn ra chủ yếu ở bào quan nào?',
-      options: ['A. Ti thể', 'B. Lục lạp', 'C. Ribosome', 'D. Không bào'],
-      correctIndex: 1,
-      explanation: 'Lục lạp chứa chất diệp lục (chlorophyll) là bào quan thực hiện chức năng quang hợp ở thực vật.'
-    },
-    {
-      id: 'b7_2',
-      question: 'Sản phẩm của quá trình quang hợp ở thực vật gồm những chất nào?',
-      options: [
-        'A. Glucose và Oxygen (O2)',
-        'B. Carbon dioxide (CO2) và nước',
-        'C. Nước và muối khoáng',
-        'D. Nitrogen và Oxygen'
-      ],
-      correctIndex: 0,
-      explanation: 'Phương trình quang hợp: Nước + Carbon dioxide + Ánh sáng -> Glucose (chất hữu cơ) + Oxygen (O2).'
-    },
-    {
-      id: 'b7_3',
-      question: 'Hô hấp tế bào giải phóng dạng năng lượng chủ yếu nào cho các hoạt động sống?',
-      options: ['A. Nhiệt năng và ATP', 'B. Quang năng', 'C. Điện năng', 'D. Hóa năng tích lũy bền vững'],
-      correctIndex: 0,
-      explanation: 'Hô hấp tế bào đốt cháy chất hữu cơ giải phóng năng lượng, phần lớn tích lũy trong ATP và một phần tỏa ra dưới dạng nhiệt.'
-    },
-    {
-      id: 'b7_4',
-      question: 'Vai trò chủ yếu của nước đối với thực vật là gì?',
-      options: [
-        'A. Là nguyên liệu quang hợp, dung môi hòa tan chất và điều hòa nhiệt độ.',
-        'B. Chỉ đóng vai trò tạo màu xanh cho lá cây.',
-        'C. Cung cấp trực tiếp protein cho cây.',
-        'D. Ngăn cản sự hấp thụ khoáng chất.'
-      ],
-      correctIndex: 0,
-      explanation: 'Nước tham gia trực tiếp vào quá trình quang hợp, là môi trường vận chuyển các chất dinh dưỡng và duy trì độ cứng của tế bào.'
-    },
-    {
-      id: 'b7_5',
-      question: 'Yếu tố nào sau đây KHÔNG ảnh hưởng trực tiếp đến tốc độ quang hợp của cây xanh?',
-      options: ['A. Ánh sáng', 'B. Nồng độ CO2', 'C. Độ ẩm không khí ngoài trời ban đêm', 'D. Nhiệt độ môi trường'],
-      correctIndex: 2,
-      explanation: 'Độ ẩm không khí ban đêm khi cây không quang hợp không ảnh hưởng trực tiếp bằng ánh sáng, CO2 và nhiệt độ ban ngày.'
-    }
-  ],
-  'Hóa học_8': [
-    {
-      id: 'c8_1',
-      question: 'Phân biệt hiện tượng vật lí và hiện tượng hóa học dựa vào dấu hiệu chính nào?',
-      options: [
-        'A. Có sự tạo thành chất mới hay không.',
-        'B. Sự thay đổi về nhiệt độ.',
-        'C. Sự thay đổi trạng thái rắn sang lỏng.',
-        'D. Sự thay đổi kích thước của vật.'
-      ],
-      correctIndex: 0,
-      explanation: 'Hiện tượng vật lí là chất biến đổi mà không tạo ra chất mới. Hiện tượng hóa học là hiện tượng có tạo ra chất mới.'
-    },
-    {
-      id: 'c8_2',
-      question: 'Hệ số thích hợp để cân bằng phương trình hóa học: Al + O2 -> Al2O3 lần lượt là:',
-      options: ['A. 4, 3, 2', 'B. 2, 3, 2', 'C. 3, 2, 4', 'D. 1, 1, 1'],
-      correctIndex: 0,
-      explanation: 'Phương trình cân bằng: 4Al + 3O2 -> 2Al2O3 (kiểm tra nguyên tử Al: 4 = 4, nguyên tử O: 6 = 6).'
-    },
-    {
-      id: 'c8_3',
-      question: 'Khối lượng mol của khí Carbon dioxide (CO2) là bao nhiêu (cho C=12, O=16)?',
-      options: ['A. 44 g/mol', 'B. 32 g/mol', 'C. 28 g/mol', 'D. 16 g/mol'],
-      correctIndex: 0,
-      explanation: 'M(CO2) = 12 + 16 * 2 = 12 + 32 = 44 g/mol.'
-    },
-    {
-      id: 'c8_4',
-      question: 'Thành phần phần trăm theo thể tích của khí Oxygen trong không khí là khoảng bao nhiêu?',
-      options: ['A. 21%', 'B. 78%', 'C. 1%', 'D. 50%'],
-      correctIndex: 0,
-      explanation: 'Không khí chứa khoảng 78% Nitrogen, 21% Oxygen và 1% các khí khác (Argon, CO2,...).'
-    },
-    {
-      id: 'c8_5',
-      question: 'Đốt cháy hoàn toàn 2,4g Magnesium (Mg) trong bình chứa khí oxygen thu được Magnesium oxide (MgO). Khối lượng MgO thu được là (Mg=24, O=16):',
-      options: ['A. 4,0 g', 'B. 8,0 g', 'C. 2,0 g', 'D. 6,0 g'],
-      correctIndex: 0,
-      explanation: '2Mg + O2 -> 2MgO. Số mol Mg = 2.4/24 = 0.1 mol. Số mol MgO = 0.1 mol. Khối lượng MgO = 0.1 * 40 = 4.0 g.'
-    }
-  ],
-  'Khoa học Trái Đất_6': [
-    {
-      id: 'e6_1',
-      question: 'Cấu tạo bên trong của Trái Đất gồm bao nhiêu lớp chính?',
-      options: ['A. 3 lớp (Vỏ, Mantin, Nhân)', 'B. 2 lớp (Vỏ và Nhân)', 'C. 4 lớp', 'D. 5 lớp'],
-      correctIndex: 0,
-      explanation: 'Cấu tạo Trái Đất gồm 3 lớp đồng tâm: Lớp vỏ Trái Đất, lớp Mantin (bao màng) và Nhân Trái Đất.'
-    },
-    {
-      id: 'e6_2',
-      question: 'Hiện tượng ngày và đêm luân phiên trên Trái Đất là do nguyên nhân nào?',
-      options: [
-        'A. Trái Đất tự quay quanh trục từ Tây sang Đông.',
-        'B. Trái Đất chuyển động quay quanh Mặt Trời.',
-        'C. Mặt Trái Đất che khuất Mặt Trời.',
-        'D. Độ nghiêng của trục Trái Đất.'
-      ],
-      correctIndex: 0,
-      explanation: 'Do Trái Đất có hình cầu và tự quay quanh trục nên nửa được chiếu sáng là ngày, nửa khuất trong bóng râm là đêm.'
-    },
-    {
-      id: 'e6_3',
-      question: 'Khoáng sản là gì?',
-      options: [
-        'A. Các khoáng vật và đá có ích được con người khai thác và sử dụng.',
-        'B. Tất cả các loại đá nằm trên bề mặt đất.',
-        'C. Nước ngầm trong lòng đất.',
-        'D. Lớp đất trồng trên bề mặt.'
-      ],
-      correctIndex: 0,
-      explanation: 'Khoáng sản là những khoáng vật và đá có ích được con người khai thác, sử dụng cho sản xuất và đời sống.'
-    },
-    {
-      id: 'e6_4',
-      question: 'Chuyển động của Trái Đất quanh Mặt Trời tạo ra hiện tượng gì quan trọng trong năm?',
-      options: ['A. Các mùa trong năm', 'B. Thủy triều', 'C. Động đất', 'D. Gió đất và gió biển'],
-      correctIndex: 0,
-      explanation: 'Trái Đất chuyển động quanh Mặt Trời kết hợp với trục nghiêng tạo ra các mùa (xuân, hạ, thu, đông) trong năm.'
-    },
-    {
-      id: 'e6_5',
-      question: 'Lớp vỏ Trái Đất có đặc điểm nào sau đây?',
-      options: [
-        'A. Là lớp ngoài cùng, mỏng nhất nhưng đóng vai trò cực kỳ quan trọng cho sự sống.',
-        'B. Là lớp dày nhất nằm ở tâm Trái Đất.',
-        'C. Ở trạng thái lỏng hoàn toàn.',
-        'D. Có nhiệt độ lên tới hàng nghìn độ C.'
-      ],
-      correctIndex: 0,
-      explanation: 'Lớp vỏ Trái Đất là lớp ngoài cùng, rắn chắc, độ dày từ vài km đến khoảng 70km, là nơi sinh sống của sinh vật và con người.'
-    }
-  ]
-};
-
-// API: Generate Quiz (Ensuring concrete specific questions for subjects & grades)
+// API: Generate Quiz (Strict subject separation and 4 difficulty levels)
 app.post('/api/generate-quiz', async (req, res) => {
   try {
-    const { subject = 'Vật lí', grade = '8', count = 5, difficulty = 'Nâng cao' } = req.body;
-    
-    // Check specific question bank first
-    const key = `${subject}_${grade}`;
-    const bank = SPECIFIC_QUESTION_BANKS[key] || SPECIFIC_QUESTION_BANKS['Vật lí_8'];
-    
-    // If we have a matching bank, slice or repeat to match requested count
-    let baseQuestions = [...bank];
-    while (baseQuestions.length < Number(count)) {
-      baseQuestions = baseQuestions.concat(bank);
-    }
-    const selectedQuestions = baseQuestions.slice(0, Number(count) || 5).map((q, idx) => ({
-      ...q,
-      id: `q_${subject}_${grade}_${idx + 1}_${Date.now()}`,
-      difficulty
-    }));
+    const { 
+      subject = 'Vật lí', 
+      grade = '8', 
+      count = 5, 
+      difficulty = 'Nâng cao',
+      topic = '' 
+    } = req.body || {};
 
-    if (!ai) {
-      return res.json({ questions: selectedQuestions });
+    const cleanSubject = normalizeSubject(subject);
+    const cleanDifficulty = normalizeDifficulty(difficulty);
+    const cleanGrade = String(grade).replace(/\D/g, '') || '8';
+    const numCount = Math.max(1, Math.min(20, Number(count) || 5));
+
+    // Curated pedagogical fallback questions strictly matching subject, grade & level
+    const fallbackQuestions = getQuestionsBySubjectAndLevel(cleanSubject, cleanGrade, cleanDifficulty, numCount);
+
+    const keyToUse = process.env.GEMINI_API_KEY || '';
+    if (!keyToUse) {
+      return res.json({ questions: fallbackQuestions });
     }
 
     try {
-      const prompt = `Hãy tạo chính xác ${count || 5} câu hỏi trắc nghiệm Khoa học Tự nhiên cụ thể, chuẩn xác theo chương trình GDPT 2018 cho môn ${subject}, lớp ${grade}, độ khó "${difficulty}". 
-      Mỗi câu hỏi phải có nội dung cụ thể, 4 phương án A, B, C, D rõ ràng, đáp án đúng (correctIndex từ 0 đến 3) và giải thích chi tiết.
-      Trả về định dạng JSON thuần túy dạng mảng:
-      [
-        {
-          "id": "q1",
-          "question": "Nội dung câu hỏi cụ thể...",
-          "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-          "correctIndex": 0,
-          "explanation": "Giải thích chi tiết..."
-        }
-      ]`;
+      const liveAi = new GoogleGenAI({
+        apiKey: keyToUse,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
+      const difficultyGuidance: Record<string, string> = {
+        'Cơ bản': 'Mức độ Cơ bản (Nhận biết, Thông hiểu): kiểm tra định nghĩa, khái niệm, công thức nền tảng hoặc nhận diện hiện tượng thực tế đơn giản.',
+        'Vận dụng': 'Mức độ Vận dụng: yêu cầu áp dụng công thức vào bài toán tính toán cơ bản hoặc giải thích hiện tượng khoa học thực tiễn trong đời sống.',
+        'Nâng cao': 'Mức độ Nâng cao: bài toán tổng hợp liên hệ nhiều kiến thức, suy luận logic, so sánh hoặc phân tích đồ thị/thực nghiệm.',
+        'Chuyên đề ôn HSG': 'Mức độ Chuyên đề ôn HSG (Học sinh Giỏi): câu hỏi trắc nghiệm chuyên sâu theo cấu trúc đề thi HSG cấp huyện/tỉnh, câu hỏi phân loại cao, tình huống thực nghiệm khoa học phức hợp.'
+      };
+
+      const prompt = `Bạn là chuyên gia Khảo thí Khoa học Tự nhiên Việt Nam (CT GDPT 2018).
+Hãy tạo chính xác ${numCount} câu hỏi trắc nghiệm 4 lựa chọn (A, B, C, D) cho:
+- Phân môn: ${cleanSubject} (tuyệt đối chỉ ra câu hỏi môn ${cleanSubject}, không lẫn sang môn khác)
+- Khối lớp: Lớp ${cleanGrade}
+- Mức độ yêu cầu: ${cleanDifficulty} (${difficultyGuidance[cleanDifficulty] || ''})
+${topic ? `- Chuyên đề định hướng: ${topic}` : ''}
+
+Yêu cầu xuất sắc:
+1. Nội dung câu hỏi khoa học chuẩn mực, bám sát sách KHTN 2018.
+2. 4 phương án A, B, C, D rõ ràng, không trùng lặp, có 1 đáp án đúng duy nhất.
+3. correctIndex là chỉ số 0 (A), 1 (B), 2 (C), hoặc 3 (D).
+4. explanation giải thích cặn kẽ từng bước, công thức và bản chất khoa học.
+
+Định dạng trả về JSON thuần túy dạng mảng:
+[
+  {
+    "id": "q1",
+    "subject": "${cleanSubject}",
+    "grade": "${cleanGrade}",
+    "difficulty": "${cleanDifficulty}",
+    "topic": "Tên chủ đề...",
+    "question": "Nội dung câu hỏi...",
+    "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+    "correctIndex": 0,
+    "explanation": "Giải thích chi tiết..."
+  }
+]`;
+
+      const response = await liveAi.models.generateContent({
+        model: 'gemini-3.8-flash',
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
-          temperature: 0.7,
-          maxOutputTokens: 1500
+          temperature: 0.6,
+          maxOutputTokens: 2500
         }
       });
 
       let text = response.text || '[]';
       text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-      const questions = JSON.parse(text);
-      if (Array.isArray(questions) && questions.length > 0) {
-        return res.json({ questions });
+      const generated = JSON.parse(text);
+
+      if (Array.isArray(generated) && generated.length > 0) {
+        const validated = generated.slice(0, numCount).map((q: any, idx: number) => ({
+          id: q.id || `q_${cleanSubject}_${cleanGrade}_${idx + 1}_${Date.now()}`,
+          subject: cleanSubject,
+          grade: cleanGrade,
+          difficulty: cleanDifficulty,
+          topic: q.topic || topic || `Chuyên đề ${cleanSubject} ${cleanDifficulty}`,
+          question: q.question,
+          options: Array.isArray(q.options) && q.options.length === 4 ? q.options : fallbackQuestions[idx % fallbackQuestions.length].options,
+          correctIndex: typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex <= 3 ? q.correctIndex : 0,
+          explanation: q.explanation || 'Đáp án chính xác theo chương trình KHTN 2018.'
+        }));
+        return res.json({ questions: validated });
       }
-      return res.json({ questions: selectedQuestions });
+      return res.json({ questions: fallbackQuestions });
     } catch (err) {
-      console.error('AI quiz generation error, using specific question bank:', err);
-      return res.json({ questions: selectedQuestions });
+      console.warn('AI quiz generation error, using curriculum question bank:', err);
+      return res.json({ questions: fallbackQuestions });
     }
   } catch (error: any) {
     console.error('Generate Quiz Error:', error);
-    res.status(500).json({ error: error.message || 'Lỗi khi tạo câu hỏi.' });
+    const { subject = 'Vật lí', grade = '8', difficulty = 'Nâng cao', count = 5 } = req.body || {};
+    const safeSub = normalizeSubject(subject);
+    const safeDiff = normalizeDifficulty(difficulty);
+    const fallback = getQuestionsBySubjectAndLevel(safeSub, grade, safeDiff, Number(count) || 5);
+    res.json({ questions: fallback });
   }
 });
 

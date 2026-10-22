@@ -1,67 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-
-const SPECIFIC_QUESTION_BANKS: Record<string, any[]> = {
-  'Vật lí_8': [
-    {
-      id: 'p8_1',
-      question: 'Áp suất chất lỏng tác dụng lên một điểm ở độ sâu h tính theo công thức nào (với d là trọng lượng riêng của chất lỏng)?',
-      options: ['A. p = d * h', 'B. p = d / h', 'C. p = h / d', 'D. p = d * h * h'],
-      correctIndex: 0,
-      explanation: 'Công thức tính áp suất chất lỏng đứng yên ở độ sâu h là p = d * h.'
-    },
-    {
-      id: 'p8_2',
-      question: 'Một người đứng bằng hai chân trên sàn nhà. Trọng lượng của người là 500 N, diện tích tiếp xúc của mỗi bàn chân với mặt sàn là 0,01 m2. Áp suất người đó tác dụng lên sàn là bao nhiêu?',
-      options: ['A. 5000 Pa', 'B. 25000 Pa', 'C. 10000 Pa', 'D. 50000 Pa'],
-      correctIndex: 1,
-      explanation: 'Diện tích tiếp xúc tổng cộng S = 2 * 0,01 = 0,02 m2. Áp suất p = F / S = 500 / 0,02 = 25000 Pa.'
-    },
-    {
-      id: 'p8_3',
-      question: 'Lực đẩy Archimedes tác dụng lên một vật nhúng trong chất lỏng phụ thuộc vào những yếu tố nào?',
-      options: [
-        'A. Trọng lượng riêng của chất lỏng và thể tích phần chất lỏng bị vật chiếm chỗ.',
-        'B. Khối lượng của vật và chiều sâu nhúng vật.',
-        'C. Trọng lượng của vật và thể tích của vật.',
-        'D. Hình dạng của vật và bản chất của chất lỏng.'
-      ],
-      correctIndex: 0,
-      explanation: 'Theo định luật Archimedes, lực đẩy Fa = d * V.'
-    }
-  ],
-  'Sinh học_7': [
-    {
-      id: 'b7_1',
-      question: 'Quá trình quang hợp ở thực vật diễn ra chủ yếu ở bào quan nào?',
-      options: ['A. Ti thể', 'B. Lục lạp', 'C. Ribosome', 'D. Không bào'],
-      correctIndex: 1,
-      explanation: 'Lục lạp chứa chất diệp lục thực hiện quang hợp.'
-    }
-  ],
-  'Hóa học_8': [
-    {
-      id: 'c8_1',
-      question: 'Phân biệt hiện tượng vật lí và hiện tượng hóa học dựa vào dấu hiệu chính nào?',
-      options: [
-        'A. Có sự tạo thành chất mới hay không.',
-        'B. Sự thay đổi về nhiệt độ.',
-        'C. Sự thay đổi trạng thái rắn sang lỏng.',
-        'D. Sự thay đổi kích thước của vật.'
-      ],
-      correctIndex: 0,
-      explanation: 'Hiện tượng hóa học là hiện tượng có tạo ra chất mới.'
-    }
-  ],
-  'Khoa học Trái Đất_6': [
-    {
-      id: 'e6_1',
-      question: 'Cấu tạo bên trong của Trái Đất gồm bao nhiêu lớp chính?',
-      options: ['A. 3 lớp (Vỏ, Mantin, Nhân)', 'B. 2 lớp (Vỏ và Nhân)', 'C. 4 lớp', 'D. 5 lớp'],
-      correctIndex: 0,
-      explanation: 'Cấu tạo Trái Đất gồm 3 lớp: Vỏ, Mantin và Nhân.'
-    }
-  ]
-};
+import { getQuestionsBySubjectAndLevel, normalizeSubject, normalizeDifficulty } from '../src/data/quizBank';
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -82,66 +20,108 @@ export default async function handler(req: any, res: any) {
         body = JSON.parse(body);
       } catch {}
     }
-    const { subject = 'Vật lí', grade = '8', count = 5, difficulty = 'Nâng cao' } = body || {};
-    
-    const key = `${subject}_${grade}`;
-    const bank = SPECIFIC_QUESTION_BANKS[key] || SPECIFIC_QUESTION_BANKS['Vật lí_8'];
-    
-    let baseQuestions = [...bank];
-    while (baseQuestions.length < Number(count)) {
-      baseQuestions = baseQuestions.concat(bank);
-    }
-    const selectedQuestions = baseQuestions.slice(0, Number(count) || 5).map((q, idx) => ({
-      ...q,
-      id: `q_${subject}_${grade}_${idx + 1}_${Date.now()}`,
-      difficulty
-    }));
+    const { 
+      subject = 'Vật lí', 
+      grade = '8', 
+      count = 5, 
+      difficulty = 'Nâng cao',
+      topic = ''
+    } = body || {};
+
+    const cleanSubject = normalizeSubject(subject);
+    const cleanDifficulty = normalizeDifficulty(difficulty);
+    const cleanGrade = String(grade).replace(/\D/g, '') || '8';
+    const numCount = Math.max(1, Math.min(20, Number(count) || 5));
+
+    // Curated pedagogical fallback questions strictly matching subject, grade & level
+    const fallbackQuestions = getQuestionsBySubjectAndLevel(cleanSubject, cleanGrade, cleanDifficulty, numCount);
 
     const apiKey = process.env.GEMINI_API_KEY || '';
-    const ai = apiKey ? new GoogleGenAI({
-      apiKey,
-      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-    }) : null;
-
-    if (!ai) {
-      return res.status(200).json({ questions: selectedQuestions });
+    if (!apiKey) {
+      return res.status(200).json({ questions: fallbackQuestions });
     }
 
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+    });
+
     try {
-      const prompt = `Hãy tạo chính xác ${count || 5} câu hỏi trắc nghiệm Khoa học Tự nhiên chuẩn xác theo chương trình GDPT 2018 cho môn ${subject}, lớp ${grade}, độ khó "${difficulty}". 
-      Trả về định dạng JSON thuần túy dạng mảng:
-      [
-        {
-          "id": "q1",
-          "question": "Nội dung...",
-          "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-          "correctIndex": 0,
-          "explanation": "Giải thích..."
-        }
-      ]`;
+      const difficultyGuidance: Record<string, string> = {
+        'Cơ bản': 'Mức độ Cơ bản (Nhận biết, Thông hiểu): kiểm tra định nghĩa, khái niệm, công thức nền tảng hoặc nhận diện hiện tượng thực tế đơn giản.',
+        'Vận dụng': 'Mức độ Vận dụng: yêu cầu áp dụng công thức vào bài toán tính toán cơ bản hoặc giải thích hiện tượng khoa học thực tiễn trong đời sống.',
+        'Nâng cao': 'Mức độ Nâng cao: bài toán tổng hợp liên hệ nhiều kiến thức, suy luận logic, so sánh hoặc phân tích đồ thị/thực nghiệm.',
+        'Chuyên đề ôn HSG': 'Mức độ Chuyên đề ôn HSG (Học sinh Giỏi): câu hỏi trắc nghiệm chuyên sâu theo cấu trúc đề thi HSG cấp huyện/tỉnh, câu hỏi phân loại cao, tình huống thực nghiệm khoa học phức hợp.'
+      };
+
+      const prompt = `Bạn là chuyên gia Khảo thí Khoa học Tự nhiên Việt Nam (CT GDPT 2018).
+Hãy tạo chính xác ${numCount} câu hỏi trắc nghiệm 4 lựa chọn (A, B, C, D) cho:
+- Phân môn: ${cleanSubject} (tuyệt đối chỉ ra câu hỏi môn ${cleanSubject}, không lẫn sang môn khác)
+- Khối lớp: Lớp ${cleanGrade}
+- Mức độ yêu cầu: ${cleanDifficulty} (${difficultyGuidance[cleanDifficulty] || ''})
+${topic ? `- Chuyên đề định hướng: ${topic}` : ''}
+
+Yêu cầu xuất sắc:
+1. Nội dung câu hỏi khoa học chuẩn mực, bám sát sách KHTN 2018.
+2. 4 phương án A, B, C, D rõ ràng, không trùng lặp, có 1 đáp án đúng duy nhất.
+3. correctIndex là chỉ số 0 (A), 1 (B), 2 (C), hoặc 3 (D).
+4. explanation giải thích cặn kẽ từng bước, công thức và bản chất khoa học.
+
+Định dạng trả về JSON thuần túy dạng mảng:
+[
+  {
+    "id": "q1",
+    "subject": "${cleanSubject}",
+    "grade": "${cleanGrade}",
+    "difficulty": "${cleanDifficulty}",
+    "topic": "Tên chủ đề...",
+    "question": "Nội dung câu hỏi...",
+    "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+    "correctIndex": 0,
+    "explanation": "Giải thích chi tiết..."
+  }
+]`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-3.8-flash',
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
-          temperature: 0.7,
-          maxOutputTokens: 1500
+          temperature: 0.6,
+          maxOutputTokens: 2500
         }
       });
 
       let text = response.text || '[]';
       text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-      const questions = JSON.parse(text);
-      if (Array.isArray(questions) && questions.length > 0) {
-        return res.status(200).json({ questions });
+      const generated = JSON.parse(text);
+
+      if (Array.isArray(generated) && generated.length > 0) {
+        const validated = generated.slice(0, numCount).map((q: any, idx: number) => ({
+          id: q.id || `q_${cleanSubject}_${cleanGrade}_${idx + 1}_${Date.now()}`,
+          subject: cleanSubject,
+          grade: cleanGrade,
+          difficulty: cleanDifficulty,
+          topic: q.topic || topic || `Chuyên đề ${cleanSubject} ${cleanDifficulty}`,
+          question: q.question,
+          options: Array.isArray(q.options) && q.options.length === 4 ? q.options : fallbackQuestions[idx % fallbackQuestions.length].options,
+          correctIndex: typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex <= 3 ? q.correctIndex : 0,
+          explanation: q.explanation || 'Đáp án chính xác theo chương trình KHTN 2018.'
+        }));
+        return res.status(200).json({ questions: validated });
       }
-      return res.status(200).json({ questions: selectedQuestions });
-    } catch {
-      return res.status(200).json({ questions: selectedQuestions });
+
+      return res.status(200).json({ questions: fallbackQuestions });
+    } catch (aiErr: any) {
+      console.warn('AI Quiz generation failed, returning curriculum bank:', aiErr?.message);
+      return res.status(200).json({ questions: fallbackQuestions });
     }
   } catch (error: any) {
     console.error('Generate Quiz Error:', error);
-    return res.status(500).json({ error: error.message || 'Lỗi khi tạo câu hỏi.' });
+    const { subject = 'Vật lí', grade = '8', difficulty = 'Nâng cao', count = 5 } = req.body || {};
+    const safeSub = normalizeSubject(subject);
+    const safeDiff = normalizeDifficulty(difficulty);
+    const fallback = getQuestionsBySubjectAndLevel(safeSub, grade, safeDiff, Number(count) || 5);
+    return res.status(200).json({ questions: fallback });
   }
 }
