@@ -371,7 +371,7 @@ if (process.env.NODE_ENV !== 'production') {
     appType: 'spa'
   });
   app.use(vite.middlewares);
-} else {
+} else if (!process.env.VERCEL) {
   app.use(express.static(path.join(__dirname, 'dist')));
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));

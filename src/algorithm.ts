@@ -1103,7 +1103,7 @@ export function generateTimetable(
 
     if (lesson.isExam && lesson.isDouble) {
       const t1 = findExamTeacher(lesson, day, period);
-      const t2 = findExamTeacher(lesson, day, period + 1, t1);
+      const t2 = findExamTeacher(lesson, day, period + 1, t1 || undefined);
       
       if (t1 && t2) {
         classSchedule[lesson.classId][day][period] = lesson.subjectId;

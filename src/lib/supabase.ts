@@ -255,7 +255,7 @@ function createConfiguredClient(): SupabaseClient {
     };
 
     const origGetUser = client.auth.getUser.bind(client.auth);
-    client.auth.getUser = async (jwt?: string) => {
+    (client.auth as any).getUser = async (jwt?: string) => {
       try {
         const res = await origGetUser(jwt);
         return res || { data: { user: null }, error: null };
