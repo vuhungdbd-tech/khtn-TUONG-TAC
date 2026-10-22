@@ -378,6 +378,10 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-app.listen(Number(PORT), '0.0.0.0', () => {
-  console.log(`KHTN Tương Tác server running on http://localhost:${PORT}`);
-});
+export default app;
+
+if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
+  app.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`KHTN Tương Tác server running on http://localhost:${PORT}`);
+  });
+}
