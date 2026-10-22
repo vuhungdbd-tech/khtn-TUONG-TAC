@@ -64,12 +64,25 @@ const SPECIFIC_QUESTION_BANKS: Record<string, any[]> = {
 };
 
 export default async function handler(req: any, res: any) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const { subject = 'Vật lí', grade = '8', count = 5, difficulty = 'Nâng cao' } = req.body || {};
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {}
+    }
+    const { subject = 'Vật lí', grade = '8', count = 5, difficulty = 'Nâng cao' } = body || {};
     
     const key = `${subject}_${grade}`;
     const bank = SPECIFIC_QUESTION_BANKS[key] || SPECIFIC_QUESTION_BANKS['Vật lí_8'];

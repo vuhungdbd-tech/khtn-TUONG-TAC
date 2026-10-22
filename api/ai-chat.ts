@@ -8,53 +8,88 @@ const SCIENTIST_PROMPTS: Record<string, string> = {
 };
 
 export default async function handler(req: any, res: any) {
+  // CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  let body = req.body;
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body);
+    } catch {}
+  }
+  const { scientistId = 'biologist', grade = '8', subject = 'Sinh học', prompt = '', history = [] } = body || {};
+
+  if (!prompt) {
+    return res.status(400).json({ error: 'Thiếu nội dung câu hỏi.' });
+  }
+
+  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+  const ai = apiKey ? new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
+    }
+  }) : null;
+
+  const systemPrompt = (SCIENTIST_PROMPTS[scientistId] || SCIENTIST_PROMPTS.biologist) +
+    `\nHọc sinh lớp ${grade}, môn ${subject}. Cấu trúc: 1. Trả lời trực tiếp, 2. Giải thích, 3. Ví dụ, 4. Câu hỏi kiểm tra.`;
+
+  if (!ai) {
+    const fallbackReply = `Chào em! Về câu hỏi "${prompt}" trong môn ${subject} lớp ${grade}:
+
+1. Trọng tâm bài học: Đây là nội dung quan trọng trong chương trình GDPT 2018.
+2. Bản chất khoa học: Hiện tượng tuân theo các quy luật tự nhiên đã học.
+3. Ứng dụng thực tế: Quan sát các ví dụ gần gũi trong đời sống hàng ngày.
+4. Ôn tập: Hãy cùng suy nghĩ thêm về bài học này nhé!`;
+    return res.status(200).json({ reply: fallbackReply });
+  }
+
+  const contextText = (history || []).slice(-2).map((h: any) => `${h.role === 'user' ? 'Học sinh' : 'AI'}: ${h.text}`).join('\n');
+  const fullPrompt = contextText ? `${contextText}\nHọc sinh: ${prompt}` : prompt;
+
   try {
-    const { scientistId = 'biologist', grade = '8', subject = 'Sinh học', prompt, history = [] } = req.body || {};
-    
-    if (!prompt) {
-      return res.status(400).json({ error: 'Thiếu nội dung câu hỏi.' });
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY || '';
-    const ai = apiKey ? new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
+    let replyText = '';
+    // Try primary model gemini-3.8-flash first
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: fullPrompt,
+        config: {
+          systemInstruction: systemPrompt,
+          temperature: 0.6,
+          maxOutputTokens: 800,
         }
-      }
-    }) : null;
-
-    const systemPrompt = (SCIENTIST_PROMPTS[scientistId] || SCIENTIST_PROMPTS.biologist) +
-      `\nHọc sinh lớp ${grade}, môn ${subject}. Cấu trúc: 1. Trả lời trực tiếp, 2. Giải thích, 3. Ví dụ, 4. Câu hỏi kiểm tra.`;
-
-    if (!ai) {
-      const fallbackReply = `Chào em! (Chế độ phản hồi nhanh - Chưa cấu hình GEMINI_API_KEY trên Vercel). Về câu hỏi "${prompt}" trong môn ${subject} lớp ${grade}:\n\n1. Trả lời trực tiếp: Kiến thức trọng tâm KHTN 2018.\n2. Giải thích: Tuân theo định luật tự nhiên.\n3. Ví dụ: Quan sát thực tế.\n4. Ôn tập: Hãy suy nghĩ thêm nhé!`;
-      return res.status(200).json({ reply: fallbackReply });
+      });
+      replyText = response.text || '';
+    } catch (e1: any) {
+      console.warn('gemini-3.8-flash fallback triggered:', e1?.message);
+      // Fallback to gemini-3.1-flash-lite
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-lite',
+        contents: fullPrompt,
+        config: {
+          systemInstruction: systemPrompt,
+          temperature: 0.6,
+          maxOutputTokens: 600,
+        }
+      });
+      replyText = response.text || '';
     }
 
-    const contextText = history.slice(-2).map((h: any) => `${h.role === 'user' ? 'Học sinh' : 'AI'}: ${h.text}`).join('\n');
-    const fullPrompt = contextText ? `${contextText}\nHọc sinh: ${prompt}` : prompt;
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-lite',
-      contents: fullPrompt,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature: 0.6,
-        maxOutputTokens: 600,
-      }
-    });
-
-    const replyText = response.text || 'Xin lỗi, AI chưa thể tạo câu trả lời lúc này.';
-    return res.status(200).json({ reply: replyText });
+    return res.status(200).json({ reply: replyText || 'Xin lỗi, AI chưa thể tạo câu trả lời lúc này.' });
   } catch (error: any) {
     console.error('AI Chat Error:', error);
-    const { subject = 'Khoa học Tự nhiên', grade = '8', prompt = '' } = req.body || {};
     const fallbackReply = `Chào em! Về câu hỏi "${prompt}" trong chương trình ${subject} lớp ${grade}:
 
 1. Trọng tâm bài học: Kiến thức này là nội dung nền tảng trong chương trình KHTN 2018.
