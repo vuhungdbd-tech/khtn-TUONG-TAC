@@ -1,0 +1,6 @@
+{
+  "name": "KHTN Tương Tác - Trợ Lý AI Nhà Khoa Học",
+  "description": "Ứng dụng web học tập môn Khoa học Tự nhiên THCS (Lớp 6-9) theo CT GDPT 2018 với 4 nhà khoa học AI, phòng trò chuyện, luyện thi HSG, ngân hàng câu hỏi và bảng điều khiển giáo viên.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
