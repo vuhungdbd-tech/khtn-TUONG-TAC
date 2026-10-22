@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { SCIENTISTS, SUBJECTS } from '../data/mockData';
 import { Sparkles, Send, Bot, User, BookOpen, RefreshCw, Award, ArrowRight, CheckCircle2 } from 'lucide-react';
 
+import { findBestScienceAnswer } from '../data/scienceEngine';
+
 interface ScientistsViewProps {
   selectedScientist: string;
   setSelectedScientist: (id: string) => void;
@@ -91,14 +93,20 @@ export const ScientistsView: React.FC<ScientistsViewProps> = ({ selectedScientis
           history: messages
         })
       });
-      const data = await res.json();
-      if (res.ok && data?.reply) {
+
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.reply && typeof data.reply === 'string' && data.reply.trim().length > 10) {
         setMessages([...newMessages, { role: 'model', text: data.reply }]);
-      } else {
-        setMessages([...newMessages, { role: 'model', text: data?.error || 'Xin lỗi, có lỗi xảy ra khi kết nối với trợ lý AI. Vui lòng thử lại.' }]);
+        return;
       }
-    } catch (err) {
-      setMessages([...newMessages, { role: 'model', text: 'Lỗi mạng khi gọi trợ lý AI. Vui lòng kiểm tra kết nối.' }]);
+
+      // Khi server trả về lỗi hoặc không có reply, sử dụng tri thức khoa học sư phạm KHTN chuẩn 2018
+      const fallbackReply = findBestScienceAnswer(q, selectedScientist, grade, subject);
+      setMessages([...newMessages, { role: 'model', text: fallbackReply }]);
+    } catch {
+      // Khi mất kết nối mạng hoặc server không phản hồi, tự động cung cấp lời giải khoa học chuẩn mực ngay lập tức
+      const fallbackReply = findBestScienceAnswer(q, selectedScientist, grade, subject);
+      setMessages([...newMessages, { role: 'model', text: fallbackReply }]);
     } finally {
       setLoading(false);
     }

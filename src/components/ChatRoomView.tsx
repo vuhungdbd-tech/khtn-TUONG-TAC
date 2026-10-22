@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { MessageSquare, Send, Bot, User, Plus, Trash2, Bookmark, Sparkles, RefreshCw } from 'lucide-react';
 
+import { findBestScienceAnswer } from '../data/scienceEngine';
+
 export const ChatRoomView: React.FC = () => {
   const [sessions, setSessions] = useState([
     { id: '1', title: 'Quang hợp và hô hấp ở thực vật', subject: 'Sinh học', time: '10 phút trước' },
@@ -28,14 +30,16 @@ export const ChatRoomView: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scientistId: 'biologist', grade: '7', subject: 'Sinh học', prompt: q, history: messages })
       });
-      const data = await res.json();
-      if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.reply && typeof data.reply === 'string' && data.reply.trim().length > 10) {
         setMessages([...newMsgs, { role: 'model', text: data.reply }]);
-      } else {
-        setMessages([...newMsgs, { role: 'model', text: 'Xin lỗi, không thể phản hồi lúc này.' }]);
+        return;
       }
+      const localReply = findBestScienceAnswer(q, 'biologist', '7', 'Sinh học');
+      setMessages([...newMsgs, { role: 'model', text: localReply }]);
     } catch {
-      setMessages([...newMsgs, { role: 'model', text: 'Lỗi kết nối mạng.' }]);
+      const localReply = findBestScienceAnswer(q, 'biologist', '7', 'Sinh học');
+      setMessages([...newMsgs, { role: 'model', text: localReply }]);
     } finally {
       setLoading(false);
     }
