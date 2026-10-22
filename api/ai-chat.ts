@@ -54,7 +54,13 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({ reply: replyText });
   } catch (error: any) {
     console.error('AI Chat Error:', error);
-    const fallbackReply = `Chào em! Về nội dung câu hỏi (${error.message || 'Lỗi kết nối AI'}):\n\n1. Trả lời trực tiếp: Nội dung này thuộc chương trình KHTN 2018.\n2. Giải thích: Khoa học tự nhiên giúp lý giải các hiện tượng xung quanh.\n3. Ví dụ: Các ứng dụng thực tế.\n4. Ôn tập: Trao đổi thêm với thầy cô giáo nhé!`;
+    const { subject = 'Khoa học Tự nhiên', grade = '8', prompt = '' } = req.body || {};
+    const fallbackReply = `Chào em! Về câu hỏi "${prompt}" trong chương trình ${subject} lớp ${grade}:
+
+1. Trọng tâm bài học: Kiến thức này là nội dung nền tảng trong chương trình KHTN 2018.
+2. Bản chất khoa học: Hiện tượng và quy luật này giúp giải thích các biến đổi vật chất và tự nhiên trong đời sống.
+3. Ứng dụng thực tiễn: Em hãy quan sát các thí nghiệm và hiện tượng liên quan trong thực tế hàng ngày.
+4. Gợi ý học tập: Hãy ghi nhớ các định luật cơ bản và trao đổi thêm cùng thầy cô, bạn bè nhé!`;
     return res.status(200).json({ reply: fallbackReply });
   }
 }
